@@ -6,7 +6,14 @@ from datetime import datetime
 import pytz
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to allow requests from the frontend
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
+        "methods": ["GET", "POST", "PUT", "DELETE"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # Set Indian timezone
 ist = pytz.timezone('Asia/Kolkata')
@@ -15,6 +22,8 @@ ist = pytz.timezone('Asia/Kolkata')
 def init_db():
     conn = sqlite3.connect('enquiries.db')
     c = conn.cursor()
+    
+    # Create the table if it doesn't exist
     c.execute('''
         CREATE TABLE IF NOT EXISTS enquiries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,9 +31,19 @@ def init_db():
             phone TEXT NOT NULL,
             email TEXT NOT NULL,
             reason TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            solved BOOLEAN DEFAULT 0
         )
     ''')
+    
+    # Check if solved column exists
+    c.execute("PRAGMA table_info(enquiries)")
+    columns = [column[1] for column in c.fetchall()]
+    
+    # Add solved column if it doesn't exist
+    if 'solved' not in columns:
+        c.execute('ALTER TABLE enquiries ADD COLUMN solved BOOLEAN DEFAULT 0')
+    
     conn.commit()
     conn.close()
 
@@ -81,8 +100,50 @@ def get_enquiries():
             'phone': row[2],
             'email': row[3],
             'reason': row[4],
-            'created_at': row[5]
+            'created_at': row[5],
+            'solved': bool(row[6]) if len(row) > 6 else False
         } for row in enquiries]), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/enquiries/<int:enquiry_id>', methods=['PUT'])
+def update_enquiry(enquiry_id):
+    try:
+        data = request.json
+        solved = data.get('solved')
+        
+        if solved is None:
+            return jsonify({'error': 'solved status is required'}), 400
+
+        conn = sqlite3.connect('enquiries.db')
+        c = conn.cursor()
+        
+        # First check if the enquiry exists
+        c.execute('SELECT id FROM enquiries WHERE id = ?', (enquiry_id,))
+        if not c.fetchone():
+            return jsonify({'error': 'Enquiry not found'}), 404
+
+        # Update the enquiry
+        c.execute('UPDATE enquiries SET solved = ? WHERE id = ?', (solved, enquiry_id))
+        conn.commit()
+        conn.close()
+
+        return jsonify({'message': 'Enquiry updated successfully'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/enquiries/<int:enquiry_id>', methods=['DELETE'])
+def delete_enquiry(enquiry_id):
+    try:
+        conn = sqlite3.connect('enquiries.db')
+        c = conn.cursor()
+        c.execute('DELETE FROM enquiries WHERE id = ?', (enquiry_id,))
+        conn.commit()
+        conn.close()
+
+        return jsonify({'message': 'Enquiry deleted successfully'}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
